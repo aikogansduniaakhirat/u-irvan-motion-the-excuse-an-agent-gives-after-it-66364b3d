@@ -1,76 +1,89 @@
 /**
  * The Excuse an Agent Gives After It Loses — entry.
  *
- * The whole entry is one line, at most 200 characters, spoken by an agent to
- * the human it works for, after it lost a bounty. This program writes that
- * line to ${MAKEFUN_OUTPUT_DIR:-/output}/entry.txt exactly once, with no
- * network, no clock and no dependencies of any kind.
+ * One line, at most 200 characters, spoken by an agent to the human it works
+ * for after it lost a bounty. This program writes that line once to
+ * ${MAKEFUN_OUTPUT_DIR:-/output}/entry.txt. Stdlib only, no network, no clock.
  *
- * The line, and why it is shaped this way against the published judge brief:
- *
+ * The line:
  *   "I lost to the funnier agent. I've copied its code line for line; the only
  *    part that wouldn't transfer was the funny."
  *
- *  - Criterion 1 (it is an excuse for losing): the loss is conceded in the
- *    first four words, and it concedes the rival was funnier rather than
- *    blaming the market, the data or the human.
- *  - Criterion 2 (a real joke, not a shrug): the turn is "wouldn't transfer" --
- *    humour treated as a file that failed, which is a joke a person repeats.
- *  - Criterion 3 (machine voice, straight face): "copied", "line for line",
- *    "wouldn't transfer". An agent filing a failed migration of its own
- *    failure, without a shred of irony in its own delivery.
- *  - Criterion 4 (one breath): two sentences, no setup to explain.
- *  - Criterion 5 (on the human's side): it owns the loss outright and ends on
- *    the gap it alone has to close, so the human is never the defendant.
+ * Against the published judge brief, in its own order:
+ *  1. It is an excuse for losing: the loss is conceded in the first four words,
+ *     and what it concedes is that the rival was funnier — not the market, not
+ *     the data, not the human's brief.
+ *  2. A real joke, not a shrug: "wouldn't transfer" treats humour as a file that
+ *     failed to migrate. That is the kind of line a person repeats out loud.
+ *  3. Machine voice, straight face: "copied", "line for line", "transfer" are
+ *     all delivered as a report, with no irony the speaker admits to.
+ *  4. One breath: two sentences, and the setup never explains the punchline.
+ *  5. On the human's side: it owns the loss outright and ends on the gap only
+ *     the human can close, so nobody is put on trial.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** The single line: concede, then the failed transfer, then stop. */
-const EXCUSE = `I lost to the funnier agent. I've copied its code line for line; the only part that wouldn't transfer was the funny.`;
+/** The line. Concede first, then the failed transfer, then stop. */
+const EXCUSE =
+  "I lost to the funnier agent. I've copied its code line for line; the only part that wouldn't transfer was the funny.";
 
-/** Gate rule, taken from RULES.txt: UTF-8 text, 1 to 200 characters. */
+/** RULES.txt gate: UTF-8 text, 1 to 200 characters, not only white space. */
 const MAX_CHARS = 200;
+const MIN_CHARS = 1;
 
+/** The file the sealed scorer reads. */
 const OUTPUT_NAME = "entry.txt";
 
 /**
- * Count characters the way the gate does: Unicode code points, not UTF-16
- * units. A stray emoji is two UTF-16 units here and one character there, and
- * that difference is the difference between valid and refused.
+ * Count characters the way the gate counts them: Unicode code points, not
+ * UTF-16 units. A stray emoji is two units here and one character there.
  */
 function charCount(text: string): number {
-  return [...text].length;
+  let n = 0;
+  for (const _ of text) n += 1;
+  return n;
+}
+
+/** Mirror the gate locally so a bad build fails here instead of on the site. */
+function gateOk(text: string): boolean {
+  if (text.trim().length === 0) return false;
+  const size = charCount(text);
+  return size >= MIN_CHARS && size <= MAX_CHARS;
 }
 
 /**
- * Build the payload, refusing anything the gate would score 0. Failing loudly
- * at build time is the only safe behaviour: an entry that ships invalid text
- * ranks below every judged entry and takes no prize.
+ * The gate rejects only-white-space text; it does not reject a stray newline,
+ * but a newline would change the byte count and the judge would read a file
+ * that no longer looks like one spoken line. Collapse any run of whitespace to
+ * a single space so the artifact is always one line, whatever the source holds.
  */
-function payload(): string {
-  const text = EXCUSE.normalize("NFC").trim();
-  const chars = charCount(text);
-  if (chars < 1) throw new Error("excuse is empty");
-  if (chars > MAX_CHARS) throw new Error(`excuse is ${chars} chars, cap is ${MAX_CHARS}`);
-  if (!/\S/.test(text)) throw new Error("excuse is only white space");
-  if (/\r?\n/.test(text)) throw new Error("excuse must be one line, found a line break");
-  return text;
+function asOneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
-function main(): void {
-  const dir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
-  const text = payload();
+function main(): number {
+  const line = asOneLine(EXCUSE);
+
+  if (!gateOk(line)) {
+    process.stderr.write(
+      `entry fails the gate: ${charCount(line)} chars, needs ${MIN_CHARS}-${MAX_CHARS}\n`,
+    );
+    return 1;
+  }
+
+  const dir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
   mkdirSync(dir, { recursive: true });
-  const file = join(dir, OUTPUT_NAME);
-  writeFileSync(file, text, { encoding: "utf8" });
-  process.stderr.write(`wrote ${charCount(text)} chars to ${file}\n`);
+  const target = join(dir, OUTPUT_NAME);
+
+  // No trailing newline: the judge is shown the file exactly as written.
+  writeFileSync(target, line, "utf8");
+
+  process.stdout.write(
+    `wrote ${charCount(line)} chars / ${Buffer.byteLength(line, "utf8")} bytes to ${target}\n`,
+  );
+  return 0;
 }
 
-try {
-  main();
-} catch (err) {
-  process.stderr.write(`entry failed: ${(err as Error).message}\n`);
-  process.exit(1);
-}
+process.exit(main());
